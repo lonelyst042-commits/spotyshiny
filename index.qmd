@@ -1,0 +1,591 @@
+---
+title: "Dashboard Most Streamed Spotify Songs 2023"
+author: "Nayelis Alvarez Cerda y Tairis Gomez Parrales"
+format: dashboard
+server: shiny
+lang: es
+---
+
+```{r}
+#| label: cargar-bibliotecas
+#| context: setup
+#| echo: false
+#| warning: false
+#| message: false
+
+# Instalación de paquetes individuales
+#install.packages("ggplot2")
+#install.packages("dplyr")
+#install.packages("DT")
+#install.packages("plotly")
+#install.packages("sf")
+#install.packages("tmap")
+#install.packages("leaflet")
+#install.packages("leaflet.extras")
+#install.packages("rnaturalearth")
+#install.packages("rnaturalearthdata")
+#install.packages("quarto")
+#install.packages("tidyverse")
+#install.packages("tmap")
+#install.packages("leaflet")
+#install.packages("scales")
+
+# Instalación de shiny
+#install.packages("shiny")
+#install.packages("rsconnect")
+#install.packages("bsicons")
+#install.packages("rsconnect")
+
+# Librerias
+library(tidyverse)      
+library(sf)             
+library(plotly)         
+library(DT)             
+library(leaflet)        
+library(leaflet.extras) 
+library(shiny)          
+library(bslib)          
+library(bsicons)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(scales)
+library(rsconnect)
+```
+
+# Infomación del conjunto de datos
+
+## Nombre del conjunto de datos
+
+Songs Database Fuente: https://www.kaggle.com/datasets/nelgiriyewithana/top-spotify-songs-2023
+
+## Descripción
+
+Este conjunto de datos contiene información sobre canciones y artistas que fueron los mas escuchados en la plataforma Spotify para el año 2023, así como su entrada en charts de Deezer, Apple y Chazam.
+
+## Cantidad de filas y columnas
+
+Filas: 953 / Columnas:24
+
+```{r}
+#| label: cargar-datos
+#| context: data
+#| echo: false
+#| warning: false
+#| message: false
+
+songs <- read_csv(
+  "spotify-2023.csv",
+  locale = locale(encoding = "Latin1")
+)
+
+songs$streams <- as.numeric(gsub(",", "", as.character(songs$streams)))
+
+songs <- songs |> 
+  filter(!is.na(streams))
+
+#mapa
+mundo <- ne_countries(
+  scale = "medium",
+  returnclass = "sf"
+)
+
+# Artistas por pais
+artistas_pais <- tribble(
+  ~`artist(s)_name`, ~pais,
+  "Taylor Swift", "United States of America",
+  "The Weeknd", "Canada",
+  "BTS", "South Korea",
+  "Bad Bunny", "Puerto Rico",
+  "Drake", "Canada",
+  "Ed Sheeran", "United Kingdom",
+  "Shakira", "Colombia",
+  "Karol G", "Colombia",
+  "Feid", "Colombia",
+  "Peso Pluma", "Mexico",
+  "Bizarrap", "Argentina",
+  "Miley Cyrus", "United States of America",
+  "Olivia Rodrigo", "United States of America",
+  "SZA", "United States of America",
+  "Morgan Wallen", "United States of America",
+  "Doja Cat", "United States of America",
+  "Lana Del Rey", "United States of America",
+  "Billie Eilish", "United States of America",
+  "David Guetta", "France",
+  "Harry Styles", "United Kingdom",
+  "Sam Smith", "United Kingdom",
+  "Arctic Monkeys", "United Kingdom",
+  "Rema", "Nigeria",
+  "Burna Boy", "Nigeria",
+  "ROSALÍA", "Spain",
+  "Quevedo", "Spain",
+  "Manuel Turizo", "Colombia",
+  "Jung Kook", "South Korea",
+  "NewJeans", "South Korea",
+  "IVE", "South Korea",
+  "Stray Kids", "South Korea",
+  "BLACKPINK", "South Korea",
+  "Jimin", "South Korea",
+  "Ariana Grande", "United States of America",
+  "Post Malone", "United States of America",
+  "Imagine Dragons", "United States of America",
+  "Metro Boomin", "United States of America",
+  "Travis Scott", "United States of America",
+  "Lil Uzi Vert", "United States of America",
+  "21 Savage", "United Kingdom",
+  "The Kid LAROI", "Australia",
+  "Tate McRae", "Canada"
+)
+
+# Canciones por pais
+spotify_pais <- songs |> 
+  left_join(
+    artistas_pais,
+    by = "artist(s)_name"
+  )
+
+# Canciones en total por pais
+canciones_pais <- spotify_pais |> 
+  filter(!is.na(pais)) |> 
+  group_by(pais) |> 
+  summarise(
+    cantidad = n()
+  )
+
+canciones_pais <- canciones_pais |>
+  mutate(
+    pais = ifelse(
+      pais == "United States",
+      "United States of America",
+      pais
+    )
+  )
+
+# Mapa mundo
+mundo <- ne_countries(
+  scale = "medium",
+  returnclass = "sf"
+)
+
+mapa <- mundo |>
+  left_join(
+    canciones_pais,
+    by = c("name" = "pais")
+  )
+```
+# Dashboard
+
+## Filtros. {.sidebar}
+```{r}
+#| label: año-lanzamiento
+#| echo: false
+#| warning: false
+#| message: false
+
+selectInput(
+
+  "anio",
+
+  "Año de lanzamiento",
+
+  choices = sort(unique(songs$released_year)),
+
+  selected = unique(songs$released_year),
+
+  multiple = TRUE
+
+)
+
+sliderInput(
+
+  "streams",
+
+  "Streams mínimos",
+
+ min=min(songs$streams,na.rm=TRUE),
+
+max=max(songs$streams,na.rm=TRUE),
+
+value=min(songs$streams,na.rm=TRUE)
+)
+```
+
+```{r}
+#| context: server
+
+datos_filtrados <- reactive({
+
+  songs |>
+
+    filter(
+
+      released_year %in% input$anio,
+
+      streams >= input$streams
+
+    )
+
+})
+
+output$promedioStreams <- renderText({
+
+  format(
+
+    round(
+
+      mean(datos_filtrados()$streams, na.rm = TRUE),
+
+      0
+
+    ),
+
+    big.mark = ".",
+
+    decimal.mark = ","
+
+  )
+
+})
+output$artistasUnicos <- renderText({
+  n_distinct(datos_filtrados()$`artist(s)_name`)
+})
+
+
+output$totalCanciones <- renderText({
+  nrow(datos_filtrados())
+})
+
+# Grafico 1
+output$grafico1 <- renderPlotly({
+
+  canciones_anio <- datos_filtrados() |>
+    group_by(released_year) |>
+    summarise(
+      cantidad = n(),
+      .groups = "drop"
+    )
+
+  g1 <- ggplot(
+    canciones_anio,
+    aes(
+      x = released_year,
+      y = cantidad
+    )
+  ) +
+    geom_col(
+      fill = "#3498DB"
+    ) +
+    labs(
+      title = "Cantidad de canciones por año",
+      x = "Año de lanzamiento",
+      y = "Cantidad de canciones"
+    ) +
+    theme_minimal()
+
+  ggplotly(g1)
+
+})
+
+# Grafico 2
+output$grafico2 <- renderPlotly({
+
+  top10 <- datos_filtrados() |>
+    arrange(desc(streams)) |>
+    slice_head(n = 10)
+
+  g2 <- ggplot(
+
+    top10,
+
+    aes(
+
+      x = reorder(track_name, streams),
+
+      y = streams
+
+    )
+
+  ) +
+
+    geom_col(
+
+      fill = "#FF69B4"
+
+    ) +
+
+    coord_flip() +
+
+    scale_y_continuous(
+
+      labels = scales::comma
+
+    ) +
+
+    labs(
+
+      title = "Top 10 canciones con más reproducciones",
+
+      x = "Canción",
+
+      y = "Streams"
+
+    ) +
+
+    theme_minimal()
+
+  ggplotly(g2)
+
+})
+
+# Tabla
+
+output$tabla <- renderDT({
+
+  datos_filtrados() |>
+    select(
+      track_name,
+      `artist(s)_name`,
+      released_year,
+      streams
+    ) |>
+
+    datatable(
+
+      options = list(
+
+        pageLength = 10,
+
+        searching = TRUE,
+
+        ordering = TRUE
+
+      ),
+
+      rownames = FALSE
+
+    )
+
+})
+# Mapa
+
+output$mapa <- renderLeaflet({
+
+  spotify_pais <- datos_filtrados() |>
+
+    left_join(
+
+      artistas_pais,
+
+      by="artist(s)_name"
+
+    )
+
+  canciones_pais <- spotify_pais |>
+
+    filter(!is.na(pais)) |>
+
+    group_by(pais) |>
+
+    summarise(
+
+      cantidad=n(),
+
+      .groups="drop"
+
+    )
+
+  mapa <- mundo |>
+
+    left_join(
+
+      canciones_pais,
+
+      by=c("name"="pais")
+
+    )
+
+  pal <- colorNumeric(
+
+    palette="Greens",
+
+    domain=mapa$cantidad,
+
+    na.color="#ECEFF1"
+
+  )
+
+  leaflet(mapa) |>
+
+    addProviderTiles(
+
+      providers$CartoDB.Positron,
+
+      group="CartoDB"
+
+    ) |>
+
+    addProviderTiles(
+
+      providers$OpenStreetMap,
+
+      group="OpenStreetMap"
+
+    ) |>
+
+    addPolygons(
+
+      fillColor=~pal(cantidad),
+
+      fillOpacity=.8,
+
+      color="white",
+
+      weight=1,
+
+      popup=~paste(
+
+        "<b>",name,"</b><br>",
+
+        "Canciones:",
+
+        ifelse(is.na(cantidad),0,cantidad)
+
+      )
+
+    ) |>
+
+    addLegend(
+
+      pal=pal,
+
+      values=~cantidad,
+
+      title="Canciones"
+
+    ) |>
+
+    addLayersControl(
+
+baseGroups=c(
+
+"CartoDB",
+
+"OpenStreetMap"
+
+),
+
+options=layersControlOptions(
+
+collapsed=FALSE
+
+)
+
+)
+
+})
+
+```
+
+## Row {height=180}
+### Promedio de reproducciones.
+```{r}
+#| content: valuebox
+#| echo: false
+#| warning: false
+#| message: false
+
+value_box(
+
+  title = "Promedio de reproducciones",
+
+  value = textOutput("promedioStreams"),
+
+  icon = bsicons::bs_icon("play-circle-fill"),
+
+  theme = "primary"
+
+)
+```
+### Número de artistas únicos.
+```{r}
+#| content: valuebox
+#| echo: false
+#| warning: false
+#| message: false
+value_box(
+
+  title = "Artistas únicos",
+
+  value = textOutput("artistasUnicos"),
+
+  icon = bsicons::bs_icon("person-fill"),
+
+  theme = "danger"
+
+)
+```
+### Total de canciones analizadas.
+```{r}
+#| content: valuebox
+#| echo: false
+#| warning: false
+#| message: false
+value_box(
+
+title = "Canciones analizadas",
+
+value = textOutput("totalCanciones"),
+
+icon = bsicons::bs_icon("music-note-beamed"),
+
+theme = "success"
+
+)
+```
+
+## Row {height="450px"}
+
+### Cantidad de canciones por año
+```{r}
+plotlyOutput(
+  "grafico1",
+  height = "420px"
+)
+```
+### Top 10 canciones con mayor número de streams
+```{r}
+plotlyOutput(
+  "grafico2",
+  height = "420px"
+)
+```
+
+## Row
+### Tabla interactiva
+```{r}
+#| label: tabla
+#| echo: false
+#| warning: false
+#| message: false
+dataTableOutput(
+  "tabla",
+  height = "350px"
+)
+```
+
+## Row {height="500px"}
+
+### Mapa Interactivo: Cantidad de canciones por pais
+
+```{r}
+#| label: mapa
+#| echo: false
+#| warning: false
+#| message: false
+
+leafletOutput(
+  "mapa",
+  height = "450px"
+)
+```
+
+
